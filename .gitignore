@@ -1,0 +1,96 @@
+# Byte-compiled / cached
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+*.pyo
+.Python
+env/
+venv/
+ENV/
+.venv/
+
+# Virtual environment
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+*.manifest
+*.spec
+
+# Logs and databases
+*.log
+*.sqlite3
+*.db
+*.sqlite
+
+# Django / Flask stuff:
+instance/
+*.mo
+*.pot
+*.pyc
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# VS Code settings
+.vscode/
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor / IDE
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-error.log
+yarn-debug.log
+.pnpm-debug.log
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Environment variables & secrets
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+.env.*.local
+config.js
+
+# Docker
+docker-compose.override.yml
+*.dockerfile
+docker/
+__MACOSX/
+
+# NGINX logs
+logs/
+nginx.conf~
+
+# FastAPI Uvicorn logs
+*.pid
+gunicorn.log
+gunicorn.err
+
+# Miscellaneous
+coverage/
+.coverage
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+*.pycoverage
+*.mypy_cache/
