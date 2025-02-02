@@ -1,8 +1,9 @@
 // -----------------------
-// Global variables
+// Global Config & Variables
 // -----------------------
-let menuItems = [];
-let selectedMenuItems = [];
+const API_BASE_URL = "http://localhost:8000"; // Centralized API endpoint
+let menuItems = []; // Loaded from the /menu endpoint
+let selectedMenuItems = []; // Items selected in the order form
 
 // -----------------------
 // Utility Functions
@@ -39,116 +40,237 @@ function closeModal(modalId) {
   setTimeout(() => {
     modal.classList.add("hidden");
     modal.classList.remove("fade-out");
-  }, 300); // matches CSS transition duration
-}
-
-// Allow closing modal by clicking outside the content area
-function setupModalCloseOnClick(modalId) {
-  const modal = document.getElementById(modalId);
-  modal.addEventListener("click", (event) => {
-    if (event.target === modal) {
-      closeModal(modalId);
-    }
-  });
-}
-
-// Allow closing modal with the Escape key
-function setupModalCloseOnEsc(modalId) {
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      const modal = document.getElementById(modalId);
-      if (!modal.classList.contains("hidden")) {
-        closeModal(modalId);
-      }
-    }
-  });
+  }, 300);
 }
 
 // -----------------------
-// Initialization
+// API Fetch Functions
 // -----------------------
-document.addEventListener("DOMContentLoaded", async () => {
-  // Show spinner in the table list container
-  const tableListEl = document.getElementById("tableList");
-  showLoader(tableListEl);
 
-  // Fetch both tables and menu items before proceeding
-  await Promise.all([fetchTables(), fetchMenuItems()]);
+// Fetch menu items from the API.
+// The endpoint /menu should return an array of menu items.
+// Each item should have: item_id, name, description, price.
+async function fetchMenuItems() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/menu`);
+    if (!response.ok) throw new Error("Failed to fetch menu items");
+    menuItems = await response.json();
+    console.log("Menu Items Loaded:", menuItems);
+  } catch (error) {
+    console.error("Error fetching menu items:", error);
+  }
+}
 
-  // Setup modal close functionality (click outside and ESC key)
-  ["occupyModal", "vacateModal", "orderModal"].forEach((modalId) => {
-    setupModalCloseOnClick(modalId);
-    setupModalCloseOnEsc(modalId);
-  });
+// Fetch orders from the API.
+async function fetchOrders() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/orders`);
+    if (!response.ok) throw new Error("Failed to fetch orders");
+    return await response.json();
+  } catch (error) {
+    console.error("Error fetching orders:", error);
+    return [];
+  }
+}
 
-  // Setup close buttons for modals
-  document.getElementById("occupyCancelBtn").addEventListener("click", () => {
-    closeModal("occupyModal");
-    fetchTables();
-  });
-  document.getElementById("vacateCancelBtn").addEventListener("click", () => {
-    closeModal("vacateModal");
-    fetchTables();
-  });
-  document.getElementById("orderCancelBtn").addEventListener("click", () => {
-    closeModal("orderModal");
-    resetOrderForm();
-  });
-
-  // Order form submission
-  document.getElementById("orderForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const tableId = document.getElementById("orderTableId").value.trim();
-    const selectedItemIds = selectedMenuItems.map((item) => item.item_id);
-    if (!tableId) {
-      alert("Table ID is missing.");
-      return;
-    }
-    if (selectedItemIds.length === 0) {
-      alert("Please select at least one item.");
-      return;
-    }
-    await createOrder(tableId, selectedItemIds);
-  });
-
-  // Auto-refresh free tables every 10 seconds
-  setInterval(fetchFreeTables, 10000);
-});
-
-// -----------------------
-// Data Fetching Functions
-// -----------------------
+// Fetch tables and orders concurrently and then render tables.
 async function fetchTables() {
   try {
-    const response = await fetch("http://localhost:8000/tables");
-    if (!response.ok) throw new Error("Failed to fetch tables");
-    const tables = await response.json();
-    renderTables(tables);
+    const [tablesResponse, orders] = await Promise.all([
+      fetch(`${API_BASE_URL}/tables`),
+      fetchOrders(),
+    ]);
+    if (!tablesResponse.ok) throw new Error("Failed to fetch tables");
+    const tables = await tablesResponse.json();
+
+    // Build a mapping of table_id to list of orders.
+    const ordersMapping = {};
+    orders.forEach((order) => {
+      if (!ordersMapping[order.table_id]) {
+        ordersMapping[order.table_id] = [];
+      }
+      ordersMapping[order.table_id].push(order);
+    });
+
+    renderTables(tables, ordersMapping);
   } catch (error) {
     console.error("Error fetching tables:", error);
     alert("Unable to load tables. Please try again later.");
   }
 }
 
-async function fetchFreeTables() {
+// -----------------------
+// Table Rendering & Actions
+// -----------------------
+// -----------------------
+// Table Rendering & Actions
+// -----------------------
+function renderTables(tables, ordersMapping = {}) {
+  const tableList = document.getElementById("tableList");
+  tableList.innerHTML = "";
+
+  tables.forEach((table) => {
+    // Determine if the table is occupied:
+    // A table is considered occupied if it has an occupied_time and no departure_time.
+    const isOccupied = !!table.occupied_time && !table.departure_time;
+
+    // Only display orders if the table is occupied.
+    let ordersHTML = "";
+    if (isOccupied && ordersMapping[table.table_id]) {
+      ordersMapping[table.table_id].forEach((order) => {
+        // Map each item ID to its corresponding name using the global menuItems array.
+        const itemNames = order.items.map((itemId) => {
+          const menuItem = menuItems.find((item) => item.item_id === itemId);
+          return menuItem ? menuItem.name : itemId;
+        });
+        ordersHTML += `
+          <div class="order-item bg-gray-100 p-2 mt-2 rounded">
+            <p class="text-sm"><strong>Items:</strong> ${itemNames.join(
+              ", "
+            )}</p>
+          </div>
+        `;
+      });
+    }
+
+    // Build the table card.
+    const card = document.createElement("div");
+    card.className =
+      "table-card bg-white rounded-lg shadow p-4 flex flex-col relative mb-4 transform hover:scale-105 transition-transform";
+    card.dataset.tableId = table.table_id;
+
+    card.innerHTML = `
+      <h3 class="text-xl font-bold mb-2">Table ${table.table_id}</h3>
+      <p>Status: <span class="font-semibold">${
+        isOccupied ? "Occupied" : "Free"
+      }</span></p>
+      ${ordersHTML}
+      ${
+        isOccupied
+          ? `<div class="flex justify-between items-center mt-4">
+               <button data-table-id="${table.table_id}" class="orderBtn bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded w-full">Order</button>
+               <img src="vacate-logo.png" alt="Vacate" class="vacateIcon cursor-pointer" style="width:30px; height:30px; position:absolute; top:10px; right:10px;">
+             </div>`
+          : `<button data-table-id="${table.table_id}" class="occupyBtn bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded mt-4 w-full">Occupy</button>`
+      }
+    `;
+    tableList.appendChild(card);
+  });
+
+  attachTableEventListeners();
+}
+
+// Attach event listeners for table actions using event delegation.
+function attachTableEventListeners() {
+  document
+    .getElementById("tableList")
+    .addEventListener("click", async (event) => {
+      const target = event.target;
+
+      // Occupy table button clicked.
+      if (target.classList.contains("occupyBtn")) {
+        const tableId = target.dataset.tableId;
+        document.getElementById(
+          "occupyModalTableId"
+        ).textContent = `Mark table ${tableId} as occupied?`;
+        openModal("occupyModal");
+        document.getElementById("occupyConfirmBtn").onclick = async () => {
+          target.disabled = true;
+          await occupyTable(tableId);
+          closeModal("occupyModal");
+          fetchTables();
+          target.disabled = false;
+        };
+      }
+      // Vacate table icon clicked.
+      else if (target.classList.contains("vacateIcon")) {
+        const tableCard = target.closest(".table-card");
+        const tableId = tableCard
+          ? tableCard.dataset.tableId
+          : target.dataset.tableId;
+        document.getElementById(
+          "vacateModalTableId"
+        ).textContent = `Vacate table ${tableId}?`;
+        openModal("vacateModal");
+        document.getElementById("vacateConfirmBtn").onclick = async () => {
+          target.disabled = true;
+          await vacateTable(tableId);
+          // Optionally clear any pending order form data.
+          resetOrderForm();
+          closeModal("vacateModal");
+          fetchTables();
+          target.disabled = false;
+        };
+      }
+      // Order button clicked.
+      else if (target.classList.contains("orderBtn")) {
+        const tableId = target.dataset.tableId;
+        document.getElementById("orderTableId").value = tableId;
+        openModal("orderModal");
+      }
+    });
+}
+// API call to mark a table as occupied.
+async function occupyTable(tableId) {
   try {
-    const response = await fetch("http://localhost:8000/free-tables");
-    if (!response.ok) throw new Error("Failed to fetch free tables");
-    const freeTables = await response.json();
-    highlightFreeTables(freeTables);
+    const response = await fetch(`${API_BASE_URL}/tables/occupy`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table_id: tableId }),
+    });
+    if (!response.ok) throw new Error("Failed to occupy table");
+    console.log("Table occupied successfully.");
   } catch (error) {
-    console.error("Error fetching free tables:", error);
+    console.error("Error occupying table:", error);
+    alert("Error marking table as occupied.");
   }
 }
 
-async function fetchMenuItems() {
+// API call to mark a table as vacated.
+async function vacateTable(tableId) {
   try {
-    const response = await fetch("http://localhost:8000/menu");
-    if (!response.ok) throw new Error("Failed to fetch menu items");
-    menuItems = await response.json();
-    console.log("Menu Items Loaded:", menuItems);
+    const response = await fetch(`${API_BASE_URL}/tables/${tableId}/leave`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || "Failed to vacate table");
+    }
+    console.log("Table vacated successfully.");
   } catch (error) {
-    console.error("Error fetching menu:", error);
+    console.error("Error vacating table:", error);
+    alert(error.message);
+  }
+}
+
+// Create a new order using selected menu items.
+async function createOrder(tableId, items) {
+  try {
+    if (!Array.isArray(items)) {
+      throw new Error("Items must be an array.");
+    }
+    const response = await fetch(`${API_BASE_URL}/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table_id: tableId,
+        items: items,
+      }),
+    });
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("Server Error:", errorData);
+      throw new Error(errorData.detail || "Failed to create order.");
+    }
+    const order = await response.json();
+    alert(`Order ${order.order_id} created successfully!`);
+    closeModal("orderModal");
+    resetOrderForm();
+    fetchTables();
+  } catch (error) {
+    console.error("Error creating order:", error);
+    alert("Error creating order. Please try again.");
   }
 }
 
@@ -187,12 +309,12 @@ itemSearchInput.addEventListener(
 );
 
 function selectMenuItem(item) {
-  // Prevent duplicates
+  // Prevent duplicates.
   if (selectedMenuItems.find((i) => i.item_id === item.item_id)) return;
   selectedMenuItems.push(item);
   updateSelectedItemsUI();
 
-  // Clear search field and hide suggestions
+  // Clear search field and hide suggestions.
   itemSearchInput.value = "";
   suggestionsBox.classList.add("hidden");
 }
@@ -205,13 +327,10 @@ function updateSelectedItemsUI() {
     tag.className =
       "bg-blue-500 text-white px-3 py-1 rounded flex items-center gap-2 mb-2";
     tag.textContent = item.name;
-
-    // Remove button (tag)
     const removeBtn = document.createElement("span");
     removeBtn.textContent = "✖";
     removeBtn.className = "cursor-pointer hover:text-gray-300";
     removeBtn.addEventListener("click", () => removeMenuItem(item.item_id));
-
     tag.appendChild(removeBtn);
     container.appendChild(tag);
   });
@@ -231,153 +350,60 @@ function resetOrderForm() {
 }
 
 // -----------------------
-// Table Rendering & Actions
+// Initialization
 // -----------------------
-function renderTables(tables) {
-  const tableList = document.getElementById("tableList");
-  tableList.innerHTML = "";
-
-  tables.forEach((table) => {
-    const isOccupied = !!table.occupied_time && !table.departure_time;
-    const card = document.createElement("div");
-    card.className =
-      "bg-white rounded-lg shadow p-4 flex flex-col relative mb-4 transform hover:scale-105 transition-transform";
-    card.dataset.tableId = table.table_id;
-
-    card.innerHTML = `
-      <h3 class="text-xl font-bold mb-2">Table ${table.table_id}</h3>
-      <p>Status: <span class="font-semibold">${
-        isOccupied ? "Occupied" : "Free"
-      }</span></p>
-      ${
-        isOccupied
-          ? `<div class="flex justify-between items-center mt-4">
-               <button data-table-id="${table.table_id}" class="orderBtn bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded w-full">Order</button>
-               <img src="vacate-logo.png" alt="Vacate" class="vacateIcon cursor-pointer" style="width:30px; height:30px; position:absolute; top:10px; right:10px;">
-             </div>`
-          : `<button data-table-id="${table.table_id}" class="occupyBtn bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded mt-4 w-full">Occupy</button>`
+document.addEventListener("DOMContentLoaded", async () => {
+  // Setup global modal events (click outside or ESC key to close)
+  document.querySelectorAll(".modal").forEach((modal) => {
+    modal.addEventListener("click", (event) => {
+      if (event.target === modal) {
+        closeModal(modal.id);
       }
-    `;
-    tableList.appendChild(card);
-  });
-
-  attachTableEventListeners();
-}
-
-function highlightFreeTables(freeTables) {
-  document.querySelectorAll(".table-card, .bg-white").forEach((card) => {
-    const tableId = card.dataset.tableId;
-    const isFree = freeTables.some((table) => table.table_id === tableId);
-    card.classList.toggle("border-4", isFree);
-    card.classList.toggle("border-green-500", isFree);
-  });
-}
-
-function attachTableEventListeners() {
-  // Occupy table buttons
-  document.querySelectorAll(".occupyBtn").forEach((button) => {
-    button.addEventListener("click", () => {
-      const tableId = button.dataset.tableId;
-      document.getElementById(
-        "occupyModalTableId"
-      ).textContent = `Mark table ${tableId} as occupied?`;
-      openModal("occupyModal");
-      document.getElementById("occupyConfirmBtn").onclick = async () => {
-        await occupyTable(tableId);
-        closeModal("occupyModal");
-        fetchTables();
-      };
     });
   });
-  // Vacate table icons
-  document.querySelectorAll(".vacateIcon").forEach((icon) => {
-    icon.addEventListener("click", (event) => {
-      const tableId = event.target.closest("[data-table-id]").dataset.tableId;
-      document.getElementById(
-        "vacateModalTableId"
-      ).textContent = `Vacate table ${tableId}?`;
-      openModal("vacateModal");
-      document.getElementById("vacateConfirmBtn").onclick = async () => {
-        await vacateTable(tableId);
-        closeModal("vacateModal");
-        fetchTables();
-      };
-    });
-  });
-  // Order buttons
-  document.querySelectorAll(".orderBtn").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      const tableId = event.target.dataset.tableId;
-      document.getElementById("orderTableId").value = tableId;
-      openModal("orderModal");
-    });
-  });
-}
-
-// -----------------------
-// API Calls
-// -----------------------
-async function occupyTable(tableId) {
-  try {
-    const response = await fetch("http://localhost:8000/tables/occupy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ table_id: tableId }),
-    });
-    if (!response.ok) throw new Error("Failed to occupy table");
-    console.log("Table occupied successfully.");
-  } catch (error) {
-    console.error("Error occupying table:", error);
-    alert("Error marking table as occupied.");
-  }
-}
-
-async function vacateTable(tableId) {
-  try {
-    const response = await fetch(
-      `http://localhost:8000/tables/${tableId}/leave`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-      }
-    );
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || "Failed to vacate table");
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      document.querySelectorAll(".modal:not(.hidden)").forEach((modal) => {
+        closeModal(modal.id);
+      });
     }
-    console.log("Table vacated successfully.");
+  });
+
+  // Show loader and concurrently fetch menu items and tables (with orders)
+  const tableListEl = document.getElementById("tableList");
+  showLoader(tableListEl);
+  await Promise.all([fetchMenuItems(), fetchTables()]);
+
+  // Setup modal cancel buttons.
+  document.getElementById("occupyCancelBtn").addEventListener("click", () => {
+    closeModal("occupyModal");
     fetchTables();
-  } catch (error) {
-    console.error("Error vacating table:", error);
-    alert(error.message);
-  }
-}
-
-async function createOrder(tableId, items) {
-  try {
-    if (!Array.isArray(items)) {
-      throw new Error("Items must be an array.");
-    }
-    const response = await fetch("http://localhost:8000/orders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        table_id: tableId,
-        items: items,
-      }),
-    });
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error("Server Error:", errorData);
-      throw new Error(errorData.detail || "Failed to create order.");
-    }
-    const order = await response.json();
-    alert(`Order ${order.order_id} created successfully!`);
+  });
+  document.getElementById("vacateCancelBtn").addEventListener("click", () => {
+    closeModal("vacateModal");
+    fetchTables();
+  });
+  document.getElementById("orderCancelBtn").addEventListener("click", () => {
     closeModal("orderModal");
     resetOrderForm();
-    fetchTables();
-  } catch (error) {
-    console.error("Error creating order:", error);
-    alert("Error creating order. Please try again.");
-  }
-}
+  });
+
+  // Order form submission.
+  document.getElementById("orderForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const tableId = document.getElementById("orderTableId").value.trim();
+    const selectedItemIds = selectedMenuItems.map((item) => item.item_id);
+    if (!tableId) {
+      alert("Table ID is missing.");
+      return;
+    }
+    if (selectedItemIds.length === 0) {
+      alert("Please select at least one item.");
+      return;
+    }
+    await createOrder(tableId, selectedItemIds);
+  });
+
+  // Auto-refresh tables (and orders) every 10 seconds.
+  setInterval(fetchTables, 10000);
+});

@@ -172,12 +172,19 @@ def get_available_tables(db: Session = Depends(get_db)):
     response_model=CafeTableResponse
 )
 def occupy_table(data: TableOccupy, db: Session = Depends(get_db)):
-    """Marks a table as occupied."""
+    """Marks a table as occupied if it is not already occupied."""
     table = db.query(models.CafeTable).filter_by(table_id=data.table_id).first()
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
 
+    # Check if the table is already occupied:
+    # A table is considered occupied if it has an occupied_time and no departure_time.
+    if table.occupied_time is not None and table.departure_time is None:
+        raise HTTPException(status_code=400, detail="Table is already occupied")
+
+    # Mark table as occupied and clear any previous departure time.
     table.occupied_time = datetime.utcnow()
+    table.departure_time = None
     db.commit()
     db.refresh(table)
 
@@ -191,14 +198,37 @@ def occupy_table(data: TableOccupy, db: Session = Depends(get_db)):
     response_model=CafeTableResponse
 )
 def vacate_table(table_id: str, db: Session = Depends(get_db)):
-    """Marks a table as vacated."""
+    """Marks a table as vacated and clears its associated orders."""
     table = db.query(models.CafeTable).filter_by(table_id=table_id).first()
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
 
+    # Check that the table is currently occupied.
+    if table.occupied_time is None or table.departure_time is not None:
+        raise HTTPException(status_code=400, detail="Table is not currently occupied")
+
+    # Mark the table as vacated.
     table.departure_time = datetime.utcnow()
-    db.commit()
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Failed to vacate table.")
+
     db.refresh(table)
+
+    # Clear any orders associated with this table so that new occupancy starts fresh.
+    try:
+        orders_deleted = (
+            db.query(models.Order)
+            .filter(models.Order.table_id == table_id)
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        print(f"Deleted {orders_deleted} orders for table {table_id}")
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Failed to clear orders for vacated table.")
 
     return table
 
